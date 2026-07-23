@@ -223,6 +223,20 @@ describe("POST /api/diagnose", () => {
     expect(res.status).toBe(200);
   });
 
+  it("never sends temperature, top_p, or top_k to the Anthropic API (claude-sonnet-5 rejects them)", async () => {
+    createMock.mockResolvedValueOnce(textResponse(validReportPayload()));
+
+    const res = await POST(makeRequest(validSubmission));
+    expect(res.status).toBe(200);
+
+    expect(createMock).toHaveBeenCalledTimes(1);
+    const requestBody = createMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(requestBody).not.toHaveProperty("temperature");
+    expect(requestBody).not.toHaveProperty("top_p");
+    expect(requestBody).not.toHaveProperty("top_k");
+    expect(requestBody.model).toBe("claude-sonnet-5");
+  });
+
   it("trims whitespace and strips wrapping quotes from the API key before use", async () => {
     process.env.ANTHROPIC_API_KEY = '  "sk-ant-test-key-12345"  \n';
     createMock.mockResolvedValueOnce(textResponse(validReportPayload()));

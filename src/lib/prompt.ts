@@ -23,6 +23,7 @@ Rules:
 - Any estimate must be labeled as directional.
 - Do not claim certainty beyond the supplied information.
 - The report should be decisive, but remain honest about the limits of self-reported information. Use phrasing such as "The evidence points to...", "Based on the assessment...", "The strongest constraint appears to be...", "This is likely creating...". Avoid weak filler such as "maybe", "it is hard to say", "there could potentially be".
+- Keep phrasing consistent and restrained rather than creative or varied. Favor the clearest, most direct way to state each conclusion over stylistic novelty.
 - Return valid JSON only. Do not include markdown outside JSON. Do not wrap the JSON in code fences.
 
 Return exactly this JSON structure and nothing else:
