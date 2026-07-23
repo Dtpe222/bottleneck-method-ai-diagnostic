@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+:root {
+  --color-ink: #111827;
+  --color-body: #374151;
+  --color-muted: #6b7280;
+  --color-border: #e5e7eb;
+  --color-surface: #f9fafb;
+  --color-background: #ffffff;
+  --color-accent: #1e3a5f;
+  --color-accent-soft: #e8edf3;
+  --font-serif-display: "Georgia", "Times New Roman", serif;
+}
+
+@theme inline {
+  --color-background: var(--color-background);
+  --color-foreground: var(--color-ink);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-body);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Print styles: the report screen must read as a professional consulting */
+/* document when saved to PDF via window.print().                        */
+/* ---------------------------------------------------------------------- */
+@media print {
+  @page {
+    margin: 0.6in 0.55in;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  .print-container {
+    max-width: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .print-section {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  a {
+    color: inherit !important;
+    text-decoration: none !important;
+  }
+
+  * {
+    box-shadow: none !important;
+  }
+}
