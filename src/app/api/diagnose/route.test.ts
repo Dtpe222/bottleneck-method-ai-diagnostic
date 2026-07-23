@@ -2,12 +2,37 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const createMock = vi.fn();
 
+const { MockAPIError } = vi.hoisted(() => {
+  class MockAPIError extends Error {
+    status: number;
+    type: string | null;
+    error: unknown;
+    requestID: string | null;
+    constructor(
+      status: number,
+      error: unknown,
+      message: string,
+      type: string | null = null
+    ) {
+      super(message);
+      this.name = "APIError";
+      this.status = status;
+      this.error = error;
+      this.type = type;
+      this.requestID = "req_mock_123";
+    }
+  }
+  return { MockAPIError };
+});
+
 vi.mock("@anthropic-ai/sdk", () => ({
   default: vi.fn().mockImplementation(() => ({
     messages: { create: createMock },
   })),
+  APIError: MockAPIError,
 }));
 
+import AnthropicMock from "@anthropic-ai/sdk";
 import { POST } from "./route";
 
 const validSubmission = {
@@ -196,5 +221,78 @@ describe("POST /api/diagnose", () => {
 
     const res = await POST(makeRequest(validSubmission));
     expect(res.status).toBe(200);
+  });
+
+  it("trims whitespace and strips wrapping quotes from the API key before use", async () => {
+    process.env.ANTHROPIC_API_KEY = '  "sk-ant-test-key-12345"  \n';
+    createMock.mockResolvedValueOnce(textResponse(validReportPayload()));
+
+    const res = await POST(makeRequest(validSubmission));
+    expect(res.status).toBe(200);
+
+    const constructorMock = AnthropicMock as unknown as {
+      mock: { calls: unknown[][] };
+    };
+    const lastCallArgs = constructorMock.mock.calls.at(-1)![0] as {
+      apiKey: string;
+    };
+    expect(lastCallArgs.apiKey).toBe("sk-ant-test-key-12345");
+  });
+
+  it("logs safe API key diagnostics without ever logging the key itself", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    process.env.ANTHROPIC_API_KEY = " sk-ant-abcdef123456 ";
+    createMock.mockResolvedValueOnce(textResponse(validReportPayload()));
+
+    await POST(makeRequest(validSubmission));
+
+    const diagnosticsCall = consoleErrorSpy.mock.calls.find(
+      (call) =>
+        typeof call[0] === "string" &&
+        call[0].includes("ANTHROPIC_API_KEY diagnostics")
+    );
+    expect(diagnosticsCall).toBeDefined();
+
+    const payload = diagnosticsCall![1] as Record<string, unknown>;
+    expect(payload.present).toBe(true);
+    expect(payload.startsWithExpectedPrefix).toBe(true);
+    expect(payload.requiredWhitespaceOrQuoteStripping).toBe(true);
+    expect(JSON.stringify(diagnosticsCall)).not.toContain(
+      "sk-ant-abcdef123456"
+    );
+
+    consoleErrorSpy.mockRestore();
+  });
+
+  it("logs the real Anthropic status/type/message when authentication fails with a 401", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const authError = new MockAPIError(
+      401,
+      {
+        type: "error",
+        error: { type: "authentication_error", message: "invalid x-api-key" },
+      },
+      "401 authentication_error",
+      "authentication_error"
+    );
+    createMock.mockRejectedValueOnce(authError);
+
+    const res = await POST(makeRequest(validSubmission));
+    expect(res.status).toBe(502);
+
+    const loggedCall = consoleErrorSpy.mock.calls.find(
+      (call) =>
+        typeof call[0] === "string" &&
+        call[0].includes("Anthropic API call failed")
+    );
+    expect(loggedCall).toBeDefined();
+
+    const loggedPayload = JSON.parse(loggedCall![1] as string);
+    expect(loggedPayload.status).toBe(401);
+    expect(loggedPayload.type).toBe("authentication_error");
+    expect(loggedPayload.message.length).toBeGreaterThan(0);
+    expect(loggedPayload.body.error.message).toBe("invalid x-api-key");
+
+    consoleErrorSpy.mockRestore();
   });
 });

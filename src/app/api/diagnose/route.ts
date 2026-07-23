@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
+import Anthropic, { APIError } from "@anthropic-ai/sdk";
 import { diagnosticSubmissionSchema, diagnosticReportSchema } from "@/lib/schemas";
 import { calculateDeterministicScores, ScoringValidationError } from "@/lib/scoring";
 import { buildUserPrompt, SYSTEM_PROMPT } from "@/lib/prompt";
@@ -9,6 +9,66 @@ export const runtime = "nodejs";
 
 const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 const MAX_TOKENS = 3000;
+const ANTHROPIC_KEY_PREFIX = "sk-ant-";
+
+/**
+ * Vercel's env var UI is a common source of silent 401s: a value pasted
+ * with a trailing newline, leading/trailing spaces, or wrapped in quotes
+ * (e.g. copied from a `KEY="value"` line) produces an x-api-key header
+ * that looks right in the dashboard but never matches a real key.
+ */
+function sanitizeApiKey(raw: string | undefined): {
+  key: string | undefined;
+  wasModified: boolean;
+} {
+  if (!raw) return { key: undefined, wasModified: false };
+  let value = raw.trim();
+  if (
+    value.length >= 2 &&
+    ((value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'")))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  return { key: value || undefined, wasModified: value !== raw };
+}
+
+/**
+ * Temporary diagnostics: safe to log (never logs the key itself), and safe
+ * to remove once the Vercel Anthropic auth issue is confirmed resolved.
+ */
+function logApiKeyDiagnostics(key: string | undefined, wasModified: boolean) {
+  console.error("[diagnose] ANTHROPIC_API_KEY diagnostics:", {
+    present: Boolean(key),
+    length: key?.length ?? 0,
+    startsWithExpectedPrefix: key ? key.startsWith(ANTHROPIC_KEY_PREFIX) : false,
+    requiredWhitespaceOrQuoteStripping: wasModified,
+    model: MODEL,
+  });
+}
+
+/**
+ * Anthropic.Error subclasses (AuthenticationError, etc.) carry `status`,
+ * `type`, and a JSON `error` body — but `message` is a non-enumerable
+ * Error property, so logging the raw error object can print as `{}` in
+ * log pipelines that JSON-serialize it. Pull the fields out explicitly.
+ */
+function describeAnthropicError(err: unknown) {
+  if (err instanceof APIError) {
+    return {
+      name: err.name,
+      status: err.status,
+      type: err.type,
+      message: err.message,
+      requestID: err.requestID,
+      body: err.error,
+    };
+  }
+  if (err instanceof Error) {
+    return { name: err.name, message: err.message };
+  }
+  return { message: String(err) };
+}
 
 function extractJson(text: string): unknown {
   const trimmed = text.trim();
@@ -79,7 +139,11 @@ export async function POST(request: Request) {
     throw err;
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const { key: apiKey, wasModified: apiKeyWasModified } = sanitizeApiKey(
+    process.env.ANTHROPIC_API_KEY
+  );
+  logApiKeyDiagnostics(apiKey, apiKeyWasModified);
+
   if (!apiKey) {
     console.error("ANTHROPIC_API_KEY is not configured.");
     return NextResponse.json(
@@ -95,7 +159,10 @@ export async function POST(request: Request) {
   try {
     rawText = await callClaude(client, SYSTEM_PROMPT, userPrompt);
   } catch (err) {
-    console.error("Anthropic API call failed:", err);
+    console.error(
+      "[diagnose] Anthropic API call failed:",
+      JSON.stringify(describeAnthropicError(err))
+    );
     return NextResponse.json(
       {
         error:
@@ -130,7 +197,10 @@ export async function POST(request: Request) {
             `${userPrompt}\n\nYour previous response was not valid JSON. Return ONLY valid JSON matching the schema, with no markdown, commentary, or code fences.`
           );
         } catch (retryErr) {
-          console.error("Anthropic retry call failed:", retryErr);
+          console.error(
+            "[diagnose] Anthropic retry call failed:",
+            JSON.stringify(describeAnthropicError(retryErr))
+          );
           break;
         }
       }
